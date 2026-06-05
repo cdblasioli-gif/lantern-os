@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dream Journal — Lantern OS</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0b0d14;
+      --surface: #13161f;
+      --surface2: #1a1d2a;
+      --border: #252840;
+      --text: #e8eaf6;
+      --muted: #7880a4;
+      --accent: #7c6af7;
+      --accent-dim: #2e2860;
+      --green: #4caf82;
+      --gold: #e2c97e;
+    }
+
+    html, body {
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .page {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      text-align: center;
+      padding: 80px 0 56px;
+    }
+    .hero-icon {
+      font-size: 56px;
+      display: block;
+      margin-bottom: 20px;
+      filter: drop-shadow(0 0 24px #7c6af755);
+    }
+    .hero h1 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero .tagline {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 500px;
+      margin: 0 auto 8px;
+    }
+    .hero .sub {
+      font-size: 0.85rem;
+      color: var(--muted);
+      opacity: 0.7;
+    }
+
+    /* ── CTA panels ── */
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 40px 0;
+    }
+    @media (max-width: 560px) { .panels { grid-template-columns: 1fr; } }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 28px 28px 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      text-decoration: none;
+      color: var(--text);
+      transition: border-color 0.2s, background 0.2s, transform 0.15s;
+    }
+    .panel:hover {
+      border-color: var(--accent);
+      background: var(--surface2);
+      transform: translateY(-2px);
+    }
+    .panel.primary { border-color: var(--accent-dim); }
+    .panel.primary:hover { border-color: var(--accent); }
+    .panel-icon { font-size: 28px; }
+    .panel-label {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .panel h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .panel p {
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .panel-arrow {
+      margin-top: auto;
+      padding-top: 12px;
+      font-size: 0.82rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .panel.patreon .panel-arrow { color: var(--gold); }
+    .panel.patreon { border-color: #3a2e10; }
+    .panel.patreon:hover { border-color: var(--gold); }
+
+    /* ── Feature strip ── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 8px 0 48px;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .feature .icon { font-size: 20px; margin-bottom: 6px; }
+    .feature h3 { font-size: 0.9rem; font-weight: 600; margin-bottom: 4px; }
+    .feature p { font-size: 0.78rem; color: var(--muted); }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      padding: 10px 0;
+      border-top: 1px solid var(--border);
+      margin-top: 48px;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .dot.online { background: var(--green); }
+
+    /* ── V1 benchmark table ── */
+    .benchmark {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 48px;
+    }
+    .benchmark-header {
+      padding: 18px 22px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .benchmark-header h2 { font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+    .benchmark-header p { font-size: 0.82rem; color: var(--muted); }
+    .benchmark table { width: 100%; border-collapse: collapse; }
+    .benchmark th, .benchmark td { padding: 11px 22px; text-align: left; font-size: 0.82rem; border-bottom: 1px solid var(--border); }
+    .benchmark th { color: var(--muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .benchmark tr:last-child td { border-bottom: none; }
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .pill.live { background: #1a3d2a; color: var(--green); }
+    .pill.held { background: #2a2420; color: var(--muted); }
+    .pill.optional { background: #1f1e40; color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <span class="hero-icon">🌙</span>
+    <h1>Dream <span>Journal</span></h1>
+    <p class="tagline">A private, local-first dream journal for capture, reflection, and optional AI insight.</p>
+    <p class="sub">Orion Edition · V1.0.0 · Lantern OS · Your dreams stay on your machine.</p>
+  </div>
+
+  <div class="panels">
+    <a class="panel primary" href="/dream-chat.html">
+      <span class="panel-icon">💬</span>
+      <span class="panel-label">Open App</span>
+      <h2>Dream Chat</h2>
+      <p>Log dreams and talk to Lantern OS agents about what you remember. Works offline, streams live when a provider is connected.</p>
+      <span class="panel-arrow">Open dream chat →</span>
+    </a>
+
+    <a class="panel" href="/dream-journal/index.html">
+      <span class="panel-icon">📓</span>
+      <span class="panel-label">Journal</span>
+      <h2>Full Journal</h2>
+      <p>Capture dreams, notes, symbols, and lore. Track lucidity, emotions, and recurring signs. Export any time.</p>
+      <span class="panel-arrow">Open journal →</span>
+    </a>
+
+    <a class="panel patreon" href="https://www.patreon.com/c/lanterndreamjournal" target="_blank" rel="noopener">
+      <span class="panel-icon">✦</span>
+      <span class="panel-label">Support</span>
+      <h2>Patreon</h2>
+      <p>Help keep Lantern OS local-first and independent. Early access, behind-the-scenes builds, and direct line to the founder.</p>
+      <span class="panel-arrow">Support on Patreon →</span>
+    </a>
+
+    <a class="panel" href="https://github.com/lantern-os/lantern-os" target="_blank" rel="noopener">
+      <span class="panel-icon">⚙️</span>
+      <span class="panel-label">Source</span>
+      <h2>GitHub</h2>
+      <p>Open source. Self-host in one command. No account required, no telemetry, no cloud lock-in.</p>
+      <span class="panel-arrow">View on GitHub →</span>
+    </a>
+  </div>
+
+  <div class="features">
+    <div class="feature"><div class="icon">📓</div><h3>Capture</h3><p>Dream, note, symbol, lore, mirror, and place entries.</p></div>
+    <div class="feature"><div class="icon">🔮</div><h3>Lucid tools</h3><p>Lucidity scale, technique log, recurring dream flags.</p></div>
+    <div class="feature"><div class="icon">📊</div><h3>Analytics</h3><p>Top emotions, tags, symbols, and avg lucidity over time.</p></div>
+    <div class="feature"><div class="icon">💾</div><h3>Export</h3><p>JSONL or CSV download. Your data, always portable.</p></div>
+    <div class="feature"><div class="icon">🔒</div><h3>Private</h3><p>Local-first. AI is optional and clearly labeled.</p></div>
+    <div class="feature"><div class="icon">⚡</div><h3>Fast</h3><p>No framework, no build step, no dependencies. Just Node.</p></div>
+  </div>
+
+  <div class="benchmark">
+    <div class="benchmark-header">
+      <h2>V1.0.0 feature status</h2>
+      <p>What ships, what's held, what's optional.</p>
+    </div>
+    <table>
+      <thead><tr><th>Feature</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Quick capture</td><td><span class="pill live">Live</span></td><td>Dream, note, place, character, event, lore, symbol, mirror.</td></tr>
+        <tr><td>Lucid dreaming tools</td><td><span class="pill live">Live</span></td><td>Lucidity scale, technique logging, dream-sign flags.</td></tr>
+        <tr><td>Symbol analytics</td><td><span class="pill live">Live</span></td><td>Top tags, emotions, and symbols from saved entries.</td></tr>
+        <tr><td>Export (JSONL / CSV)</td><td><span class="pill live">Live</span></td><td>Full backup download any time.</td></tr>
+        <tr><td>AI reflection chat</td><td><span class="pill optional">Optional</span></td><td>Streams when a provider key is configured. Fails fast otherwise.</td></tr>
+        <tr><td>Voice transcription</td><td><span class="pill held">Held</span></td><td>Not claimed for V1.</td></tr>
+        <tr><td>Dream art generation</td><td><span class="pill held">Held</span></td><td>Not claimed for V1.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="status-bar">
+    <div class="dot online" id="status-dot"></div>
+    <span id="status-label">local server running</span>
+    <span style="margin-left:auto;opacity:0.5">Lantern OS · private · local · v1.0.0</span>
+  </div>
+
+</div>
+<script>
+  fetch('/api/health').then(r => r.ok
+    ? (document.getElementById('status-label').textContent = 'server online')
+    : (document.getElementById('status-dot').className = 'dot', document.getElementById('status-label').textContent = 'server unreachable')
+  ).catch(() => {
+    document.getElementById('status-dot').className = 'dot';
+    document.getElementById('status-label').textContent = 'server unreachable';
+  });
+</script>
+</body>
+</html>
