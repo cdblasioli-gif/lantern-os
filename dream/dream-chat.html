@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.json">
-  <title>Dream Journal V1.0.0 — Lantern OS</title>
+  <title>Dream Journal v1.0.1 — Lantern OS</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -101,6 +101,28 @@
       cursor: pointer;
     }
     .selector-row select:focus { border-color: var(--accent); }
+    .mcp-toggle {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+    .mcp-toggle:hover { border-color: var(--accent); color: var(--accent); }
+    .mcp-toggle.active {
+      background: #0a1a0e;
+      border-color: #4caf82;
+      color: #4caf82;
+    }
+    .input-area.mcp-mode { gap: 6px; }
+    .input-area.mcp-mode .voice-btn,
+    .input-area.mcp-mode .ctf-popup,
+    .app.mcp-mode .debug-toggle,
+    .app.mcp-mode .debug-panel { display: none !important; }
     .dot {
       width: 8px;
       height: 8px;
@@ -678,6 +700,7 @@
         <option value="grok">Grok</option>
         <option value="ollama">Ollama</option>
       </select>
+      <button class="mcp-toggle" id="mcp-toggle" title="Toggle Keystone MCP mode" onclick="toggleKeystoneMcp()">🔧 MCP</button>
     </div>
     <button class="settings-btn" id="settings-btn" title="Provider settings" onclick="openSettings()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -694,7 +717,7 @@
   <div class="settings-overlay" id="settings-overlay" onclick="closeSettings()"></div>
   <div class="settings-drawer" id="settings-drawer">
     <div class="drawer-header">
-      <h2>AI Providers</h2>
+      <h2>AI Providers &amp; Discord</h2>
       <button class="drawer-close" onclick="closeSettings()">×</button>
     </div>
     <div class="drawer-body">
@@ -771,6 +794,29 @@
           <span class="save-feedback" id="fb-grok"></span>
         </div>
       </div>
+
+      <!-- Discord Bot -->
+      <div class="provider-card" id="card-discord">
+        <div class="provider-top">
+          <div class="provider-icon" style="background:#2c2f33">🎮</div>
+          <span class="provider-name">Discord Bot <span style="font-weight:400;color:var(--muted);font-size:0.78rem">Lantern Lounge</span></span>
+          <span class="provider-status missing" id="status-discord-token">not set</span>
+        </div>
+        <div class="provider-key-row">
+          <input class="provider-key-input" id="key-discord-token" type="password" placeholder="Bot token from Discord Developer Portal" autocomplete="off" spellcheck="false">
+          <button class="provider-save-btn" onclick="saveKey('discord-token','DISCORD_BOT_TOKEN','key-discord-token')">Save</button>
+        </div>
+        <div class="provider-key-row" style="margin-top:8px;">
+          <input class="provider-key-input" id="key-discord-guild" type="text" placeholder="Guild ID (numeric)" autocomplete="off" spellcheck="false">
+          <button class="provider-save-btn" onclick="saveKey('discord-guild','LANTERN_DISCORD_GUILD_ID','key-discord-guild')">Save</button>
+        </div>
+        <div class="provider-actions">
+          <button class="provider-clear" onclick="clearKey('discord-token','DISCORD_BOT_TOKEN')">Remove Token</button>
+          <button class="provider-clear" onclick="clearKey('discord-guild','LANTERN_DISCORD_GUILD_ID')">Remove Guild</button>
+          <span class="save-feedback" id="fb-discord-token"></span>
+          <span class="save-feedback" id="fb-discord-guild"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -829,6 +875,9 @@
   const emptyState = document.getElementById("empty-state");
   const agentSelect = document.getElementById("agent-select");
   const providerSelect = document.getElementById("provider-select");
+  const mcpToggle = document.getElementById("mcp-toggle");
+  let keystoneMcpEnabled = false;
+  let originalAgents = [];
 
   let isStreaming = false;
   // Conversation history for multi-turn context — [{role:"user"|"assistant", text:"..."}]
@@ -884,6 +933,32 @@
   function toggleDebug() {
     document.getElementById("debug-panel").classList.toggle("open");
   }
+
+  function toggleKeystoneMcp() {
+    keystoneMcpEnabled = !keystoneMcpEnabled;
+    mcpToggle.classList.toggle("active", keystoneMcpEnabled);
+    document.querySelector(".app").classList.toggle("mcp-mode", keystoneMcpEnabled);
+    document.querySelector(".input-area").classList.toggle("mcp-mode", keystoneMcpEnabled);
+    if (keystoneMcpEnabled) {
+      lockAgentToKeystone();
+    } else {
+      restoreAgentSelector();
+    }
+  }
+
+  function lockAgentToKeystone() {
+    if (!originalAgents.length) return;
+    const keystone = originalAgents.find(a => a.id === "keystone");
+    if (keystone) {
+      agentSelect.innerHTML = `<option value="${keystone.id}">${keystone.name}</option>`;
+      agentSelect.value = keystone.id;
+    }
+  }
+
+  function restoreAgentSelector() {
+    if (!originalAgents.length) return;
+    agentSelect.innerHTML = originalAgents.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  }
   document.addEventListener("keydown", (e) => {
     if (e.key === "d" && !e.ctrlKey && !e.metaKey && !e.altKey && e.target.tagName !== "TEXTAREA" && e.target.tagName !== "INPUT") {
       toggleDebug();
@@ -911,8 +986,10 @@
       if (r.ok) {
         const data = await r.json();
         agents = data.agents || [];
+        originalAgents = agents;
         agentSelect.innerHTML = agents.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
         if (data.default) agentSelect.value = data.default;
+        if (keystoneMcpEnabled) lockAgentToKeystone();
         statusDot.className = "dot online";
         statusLabel.textContent = "online";
         return;
@@ -940,6 +1017,19 @@
       inputEl.value = "";
       inputEl.style.height = "auto";
       toggleDebug();
+      return;
+    }
+    // Explicitly reject other bang commands so they don't silently behave like normal chat
+    const bangMatch = text.match(/^!(\S+)/);
+    if (bangMatch) {
+      inputEl.value = "";
+      inputEl.style.height = "auto";
+      const cmdName = bangMatch[1].toLowerCase();
+      const errRow = document.createElement("div");
+      errRow.className = "msg-row agent";
+      errRow.innerHTML = `<div class="msg-label">System</div><div class="bubble" style="color:var(--danger);">Unsupported command: !${escapeHtml(cmdName)}</div>`;
+      messagesEl.appendChild(errRow);
+      scrollToBottom();
       return;
     }
     if (emptyState) emptyState.style.display = "none";
@@ -998,7 +1088,7 @@
     fetch(`${serverBase}/api/dream/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, provider: provider || undefined, agent: agent || undefined, history: historyToSend }),
+      body: JSON.stringify({ message, provider: provider || undefined, agent: agent || undefined, history: historyToSend, mcp: keystoneMcpEnabled }),
     })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1038,7 +1128,7 @@
                 if (evt.cleanText && evt.cleanText !== fullText) {
                   bubble.textContent = evt.cleanText;
                 }
-                finishStream(row, bubble, cursor, displayText, evt.source, evt.error, evt.suggestions);
+                finishStream(row, bubble, cursor, displayText, evt.source, evt.error, evt.suggestions, evt.image_prompt);
               }
             } catch { /* skip malformed */ }
           }
@@ -1071,7 +1161,7 @@
       });
   }
 
-  function finishStream(row, bubble, cursor, text, source, error, suggestions) {
+  function finishStream(row, bubble, cursor, text, source, error, suggestions, imagePrompt) {
     cursor.remove();
     if (!text && !error) {
       bubble.textContent = bubble.textContent || "…";
@@ -1123,6 +1213,15 @@
     if (Array.isArray(suggestions) && suggestions.length === 3) {
       appendDoorsBanner(row, suggestions);
     }
+    // Show image prompt when AI suggests SD generation for doors
+    if (imagePrompt) {
+      const imgNote = document.createElement("div");
+      imgNote.className = "source-badge";
+      imgNote.style.marginTop = "8px";
+      imgNote.style.fontStyle = "italic";
+      imgNote.textContent = `🎨 ${imagePrompt}`;
+      row.appendChild(imgNote);
+    }
     // ✦ Log dream button — lets user save conversation as a dream entry
     if (text && source !== "failed" && source !== "error") {
       const logBtn = document.createElement("button");
@@ -1146,8 +1245,8 @@
       row.appendChild(logBtn);
     }
 
-    // Keystone: extract code blocks as executable commands
-    if (agentSelect.value === "keystone" && text) {
+    // Keystone MCP: extract code blocks as executable commands
+    if (keystoneMcpEnabled && agentSelect.value === "keystone" && text) {
       const codeBlocks = text.match(/```(?:bash|powershell|sh)?\n([\s\S]*?)```/g) || [];
       codeBlocks.forEach(block => {
         const cmd = block.replace(/```(?:bash|powershell|sh)?\n?/, "").replace(/```$/, "").trim();
@@ -1257,6 +1356,16 @@
         if (!configured) anyMissing = true;
       }
       document.getElementById("settings-btn").classList.toggle("has-error", anyMissing && data._any === false);
+      // Discord Bot status
+      const discordToken = !!(data["DISCORD_BOT_TOKEN"]);
+      const discordGuild = !!(data["LANTERN_DISCORD_GUILD_ID"]);
+      const discordStatusEl = document.getElementById("status-discord-token");
+      const discordCardEl = document.getElementById("card-discord");
+      if (discordStatusEl) {
+        discordStatusEl.textContent = (discordToken && discordGuild) ? "ready" : (discordToken ? "token only" : "not set");
+        discordStatusEl.className = `provider-status ${(discordToken && discordGuild) ? "ok" : "missing"}`;
+      }
+      if (discordCardEl) discordCardEl.classList.toggle("connected", discordToken && discordGuild);
     } catch { /* non-critical */ }
   }
 
