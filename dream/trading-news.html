@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#06b6d4">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/css/site.css">
-  <title>Trading News — Lantern OS</title>
+  <title>Trading News — Keystone OS</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -136,20 +136,22 @@
 
 <!-- ── Site nav (matching trading.html) ── -->
 <nav class="site-nav">
-  <a class="nav-brand" href="/">
+  <a class="nav-brand" href="/trader-dashboard.html">
     <span class="brand-icon"><span class="mandala-icon spin-slow"></span></span>
-    Lantern OS
+    Keystone OS
   </a>
   <div class="nav-links">
-    <a href="/dream-chat.html">Journal</a>
-    <a href="/trading.html">Trading</a>
+    <a href="/dream-chat.html">Chat</a>
+    <a href="/trader-dashboard.html">Trading</a>
     <a href="/trading-news.html" class="active">News</a>
-    <a href="/flourishing">Dashboard</a>
+    <a href="/create.html">✏️ Create</a>
     <a href="/knowledgecenter.html">Help</a>
+        <span class="sep" style="margin: 0 4px;">·</span>
+        <a href="https://www.patreon.com/lanternos" class="nav-support" target="_blank" rel="noopener noreferrer">♥ Support Keystone on Patreon</a>
   </div>
   <div class="nav-actions">
     <button class="nav-btn" id="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark mode">☀</button>
-    <a class="nav-cta" href="/dream-chat.html">Open Journal</a>
+    <a class="nav-cta" href="/dream-chat.html">Open Chat</a>
   </div>
 </nav>
 
@@ -377,54 +379,30 @@ function loadNews() {
   fetch('/api/trading/dashboard/news-feed')
     .then(r => r.json())
     .then(data => {
-      if (data.error) {
-        document.getElementById('newsContainer').innerHTML =
-          '<div class="loading" style="color:var(--danger)">News API error: ' + data.error + '</div>';
+      const tickerNews = data.ticker_news || [];
+      const broadNews = data.broad_news || [];
+      if (data.error || (tickerNews.length === 0 && broadNews.length === 0)) {
+        loadNewsFromCSF();
         return;
       }
-      const ticker_news = data.ticker_news || [];
-      const broad_news  = data.broad_news  || [];
-      allNews = [...ticker_news, ...broad_news];
+      processNews(tickerNews, broadNews, true);
+    })
+    .catch(() => loadNewsFromCSF());
+}
 
-      // Deduplicate by id
-      const seen = new Set();
-      allNews = allNews.filter(n => { if(seen.has(n.id)) return false; seen.add(n.id); return true; });
-
-      // Set accurate period label
-      if (allNews.length > 0) {
-        const dates = allNews.map(n => n.date).filter(Boolean).sort();
-        const oldest = dates[0];
-        const d = new Date(oldest);
-        const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        document.getElementById('statPeriod').textContent = label + ' — Today';
-      } else {
-        document.getElementById('statPeriod').textContent = 'Last 30 Days';
-      }
-
-      document.getElementById('statTotal').textContent = allNews.length;
-      document.getElementById('statHigh').textContent  = allNews.filter(n => n.impact >= 70).length;
-      const tickers = new Set();
-      allNews.forEach(n => (n.symbols||[]).forEach(s => tickers.add(s)));
-      document.getElementById('statTickers').textContent = tickers.size;
-      document.getElementById('lastUpdate').textContent  = 'Updated ' + new Date().toLocaleTimeString();
-
-      if (allNews.length === 0) {
-        document.getElementById('newsContainer').innerHTML =
-          '<div class="loading">No recent news articles found.</div>';
-        return;
-      }
-
-      buildTickerFilters(ticker_news);
-      applyFilters();
-
-      // Persist to CSF (fire-and-forget; server dedupes by id)
-      allNews.forEach(item => {
-        fetch('/api/trading/news/record', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(item),
-        }).catch(() => {});
-      });
+// Fallback when the dashboard news-feed (port 5050) has no data: pull
+// from the local CSF news registry instead, which is always populated.
+function loadNewsFromCSF() {
+  fetch('/api/trading/news/recent?limit=100')
+    .then(r => r.json())
+    .then(data => {
+      const items = (data.records || []).map(r => ({
+        id: r.news_id, headline: r.headline, source: r.source, url: r.url,
+        published: r.published, date: r.date, symbols: r.symbols || [], impact: r.impact,
+      }));
+      const ticker_news = items.filter(n => n.symbols && n.symbols.length > 0);
+      const broad_news  = items.filter(n => !n.symbols || n.symbols.length === 0);
+      processNews(ticker_news, broad_news, false);
     })
     .catch(err => {
       document.getElementById('newsContainer').innerHTML =
@@ -432,9 +410,56 @@ function loadNews() {
     });
 }
 
+function processNews(ticker_news, broad_news, persistToCSF) {
+  allNews = [...ticker_news, ...broad_news];
+
+  // Deduplicate by id
+  const seen = new Set();
+  allNews = allNews.filter(n => { if(seen.has(n.id)) return false; seen.add(n.id); return true; });
+
+  // Set accurate period label
+  if (allNews.length > 0) {
+    const dates = allNews.map(n => n.date).filter(Boolean).sort();
+    const oldest = dates[0];
+    const d = new Date(oldest);
+    const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    document.getElementById('statPeriod').textContent = label + ' — Today';
+  } else {
+    document.getElementById('statPeriod').textContent = 'Last 30 Days';
+  }
+
+  document.getElementById('statTotal').textContent = allNews.length;
+  document.getElementById('statHigh').textContent  = allNews.filter(n => n.impact >= 70).length;
+  const tickers = new Set();
+  allNews.forEach(n => (n.symbols||[]).forEach(s => tickers.add(s)));
+  document.getElementById('statTickers').textContent = tickers.size;
+  document.getElementById('lastUpdate').textContent  = 'Updated ' + new Date().toLocaleTimeString();
+
+  if (allNews.length === 0) {
+    document.getElementById('newsContainer').innerHTML =
+      '<div class="loading">No recent news articles found.</div>';
+    return;
+  }
+
+  buildTickerFilters(ticker_news);
+  applyFilters();
+
+  if (persistToCSF) {
+    // Persist to CSF (fire-and-forget; server dedupes by id)
+    allNews.forEach(item => {
+      fetch('/api/trading/news/record', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      }).catch(() => {});
+    });
+  }
+}
+
 loadNews();
 setInterval(loadNews, 300000); // refresh every 5 min
 </script>
 <script src="/js/theme-toggle.js"></script>
+<script src="/js/auth-gate.js" defer></script>
 </body>
 </html>
