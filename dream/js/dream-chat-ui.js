@@ -201,6 +201,27 @@ async function testWebSearch() {
 const _origOpenSettings = openSettings;
 openSettings = function() { _origOpenSettings(); updateConnectorStatuses(); };
 
+// Broken / hallucinated image URLs used to hide themselves with display:none.
+// When the answer is image-ONLY (model replied with just `![alt](url)`), that
+// left a completely blank bubble — "the answer came through but the chat bubble
+// is hidden". Swap the dead <img> for a visible fallback link so the answer is
+// never invisible: alt text (if any) + a tap-to-open link to the source URL.
+function lanternImgFallback(img) {
+  try {
+    const url = img.getAttribute('src') || '';
+    const alt = (img.getAttribute('alt') || '').trim();
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.cssText = 'display:inline-block;color:var(--accent);text-decoration:underline;word-break:break-all;font-size:13px;margin:6px 0';
+    a.textContent = '🖼️ ' + (alt ? alt + ' — ' : '') + 'image (tap to open)';
+    img.replaceWith(a);
+  } catch (e) {
+    img.style.display = 'none';
+  }
+}
+
 // ── Markdown + PR link renderer ───────────────────────────────────────────────
 function renderMarkdown(text) {
   let h = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -213,10 +234,12 @@ function renderMarkdown(text) {
   const _stash = [];
   const _put = (html) => `\x00L${_stash.push(html) - 1}\x00`;
 
-  // Images ![alt](url) → <img>. Broken / hallucinated URLs hide themselves (onerror).
-  // Must run before the link rule so ![..](..) isn't read as a text link.
+  // Images ![alt](url) → <img>. Broken / hallucinated URLs fall back to a visible
+  // link (see lanternImgFallback) instead of vanishing — so an image-only answer
+  // never renders as a blank bubble. Must run before the link rule so ![..](..)
+  // isn't read as a text link.
   h = h.replace(/!\[([^\]\n]*)\]\((https?:\/\/[^\s)"]+)\)/g, (_, alt, url) =>
-    _put(`<img src="${url}" alt="${alt.replace(/"/g, '&quot;')}" loading="lazy" referrerpolicy="no-referrer" onerror="this.style.display='none'" style="max-width:100%;border-radius:8px;margin:6px 0;display:block">`));
+    _put(`<img src="${url}" alt="${alt.replace(/"/g, '&quot;')}" loading="lazy" referrerpolicy="no-referrer" onerror="lanternImgFallback(this)" style="max-width:100%;border-radius:8px;margin:6px 0;display:block">`));
 
   // YouTube links → privacy-friendly inline embed.
   h = h.replace(/(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})[^\s<>"')\x00]*/g, (_, vid) =>
@@ -450,6 +473,150 @@ async function runAutowork(issue, btn, base) {
   }
 }
 
+// ── Explore embeds in chat (videos · discover · build · support) ──────────────
+// Surfaces the SAME server-cached data as the Explore page inline in chat when a
+// user asks for it. Mirrors the !convergence / WORK_INTENT intercept pattern:
+// deterministic, no LLM cost, and each route carries its own baked fallback so a
+// section always renders. Σ₀: improves the Converge/grounding surface, no new
+// memory system or subsystem — pure reuse of /api/{youtube,feeds,github} routes.
+// Always same-origin: the embed routes are co-served with this page by the same
+// server, so window.location.origin is correct on localhost, 4177/4178, and the
+// lantern-os.net tunnel alike. (Avoids the function-scoped serverBase, which can
+// point cross-origin at 127.0.0.1:4177 on non-loopback hosts.)
+const embedBase = () => window.location.origin;
+
+function embedEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function embedShortDate(d) {
+  if (!d) return '';
+  const t = Date.parse(d);
+  if (Number.isNaN(t)) return '';
+  try { return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return ''; }
+}
+
+// Map a typed message to an embed kind, or null. Bang commands always work; NL
+// requires an explicit "show/what/latest" framing so normal chat isn't hijacked.
+function detectEmbedIntent(text) {
+  const s = text.trim();
+  const bang = s.match(/^!(videos?|watch|youtube|discover|news|reads?|feed|build|github|releases?|commits?|support|patreon|tiers?|donate|embeds?)\b/i);
+  if (bang) {
+    const b = bang[1].toLowerCase();
+    if (/^(videos?|watch|youtube)$/.test(b)) return 'videos';
+    if (/^(discover|news|reads?|feed)$/.test(b)) return 'discover';
+    if (/^(build|github|releases?|commits?)$/.test(b)) return 'build';
+    if (/^(support|patreon|tiers?|donate)$/.test(b)) return 'support';
+    if (/^embeds?$/.test(b)) return 'all';
+  }
+  if (s.startsWith('!')) return null; // other bang commands handled elsewhere
+  const ask = /\b(show|see|view|give|got|have|where|what'?s?|which|how|latest|recent|any|list|pull up|display|open)\b/i.test(s);
+  if (!ask) return null;
+  if (/\byoutube\b/i.test(s) || /\b(latest|recent|your|the|lantern)\b[^?]*\bvideos?\b/i.test(s)) return 'videos';
+  if (/\b(discover|fresh reads?|news feed|articles?|rss feed|reading list)\b/i.test(s) || /\bwhat'?s? new\b/i.test(s)) return 'discover';
+  if (/\b(github|releases?|recent commits?|repo activity|build (status|activity))\b/i.test(s)) return 'build';
+  if (/\b(patreon|membership|tiers?|how (can i|to) support|support the (project|work))\b/i.test(s)) return 'support';
+  if (/\b(embeds?|explore (page |content |feeds?)|what can you (show|surface))\b/i.test(s)) return 'all';
+  return null;
+}
+
+async function embedVideos(base) {
+  const r = await fetch(`${base}/api/youtube/lantern-videos`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  const vids = (d.videos || []).slice(0, 6);
+  const featured = vids.find(v => v.featured || v.id === d.featured) || vids[0];
+  if (!featured) throw new Error('no videos returned');
+  const thumbs = vids.map(v =>
+    `<a href="https://www.youtube.com/watch?v=${embedEsc(v.id)}" target="_blank" rel="noopener noreferrer" style="flex:0 0 auto;width:118px;text-decoration:none;color:inherit">
+       <img src="https://img.youtube.com/vi/${embedEsc(v.id)}/mqdefault.jpg" alt="" loading="lazy" style="width:118px;height:66px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+       <div style="font-size:10.5px;line-height:1.3;margin-top:3px;max-height:27px;overflow:hidden">${embedEsc((v.title || '').slice(0, 42))}</div>
+     </a>`).join('');
+  return `<div style="font-weight:600;margin-bottom:6px">🎬 lanternYT</div>
+    <iframe src="https://www.youtube-nocookie.com/embed/${embedEsc(featured.id)}?rel=0" width="100%" height="220" style="border:0;border-radius:8px;max-width:420px;display:block" allow="encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding:8px 0 2px">${thumbs}</div>`;
+}
+
+async function embedDiscover(base) {
+  const r = await fetch(`${base}/api/feeds/discover`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  const items = (d.items || []).slice(0, 6);
+  if (!items.length) throw new Error('no items returned');
+  const rows = items.map(it => {
+    const ext = /^https?:/i.test(it.link);
+    const meta = [
+      it.source ? `<span style="color:var(--accent);font-weight:600">${embedEsc(it.source)}</span>` : '',
+      embedShortDate(it.date) ? `<span style="opacity:0.6">${embedEsc(embedShortDate(it.date))}</span>` : '',
+    ].filter(Boolean).join(' · ');
+    return `<div style="padding:6px 0;border-top:1px solid var(--border)">
+      <a href="${embedEsc(it.link)}" ${ext ? 'target="_blank" rel="noopener noreferrer"' : ''} style="color:inherit;text-decoration:none;font-weight:600;font-size:12.5px">${embedEsc(it.title)}</a>
+      ${meta ? `<div style="font-size:11px;margin-top:2px">${meta}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div style="font-weight:600;margin:12px 0 2px">🧭 Discover — fresh reads</div>${rows}`;
+}
+
+async function embedBuild(base) {
+  const r = await fetch(`${base}/api/github/activity`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const d = await r.json();
+  const rel = (d.releases || [])[0];
+  const commits = (d.commits || []).slice(0, 4);
+  const stars = typeof d.stars === 'number' ? `★ ${d.stars}` : '';
+  const tagPill = (txt, href) =>
+    `<a href="${embedEsc(href)}" target="_blank" rel="noopener noreferrer" style="font-family:ui-monospace,monospace;background:var(--bg,#111);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:var(--accent);text-decoration:none">${embedEsc(txt)}</a>`;
+  const relHtml = rel ? `<div style="margin-top:4px;font-size:12px">${tagPill(rel.tag, rel.url)} ${embedEsc(rel.name || '')}</div>` : '';
+  const comHtml = commits.map(c =>
+    `<div style="padding:4px 0;font-size:12px">${tagPill(c.sha, c.url)} ${embedEsc((c.msg || '').slice(0, 74))}</div>`).join('');
+  const repo = d.repo || 'alex-place/lantern-os';
+  const url = d.url || 'https://github.com/alex-place/lantern-os';
+  return `<div style="font-weight:600;margin:12px 0 2px">🛠️ Build — <a href="${embedEsc(url)}" target="_blank" rel="noopener noreferrer" style="color:inherit">${embedEsc(repo)}</a> <span style="opacity:0.6;font-weight:400">${stars}</span></div>${relHtml}<div style="margin-top:6px">${comHtml}</div>`;
+}
+
+function embedSupport() {
+  const tiers = [
+    ['Wanderer', '$5', 'Supporter role'],
+    ['Deep Dreamer', '$20', 'Deep Dreamer role'],
+    ['Synthesasia Guild', '$200', 'Guild (admin) role'],
+  ];
+  const cards = tiers.map(([n, p, perk]) =>
+    `<a href="https://www.patreon.com/lanternos" target="_blank" rel="noopener noreferrer" style="flex:1 1 110px;text-align:center;padding:10px;border:1px solid var(--border);border-radius:8px;text-decoration:none;color:inherit">
+       <div style="font-weight:700;font-size:12.5px">${n}</div>
+       <div style="font-size:1.2rem;font-weight:800">${p}<span style="font-size:.7rem;opacity:.6">/mo</span></div>
+       <div style="font-size:10.5px;opacity:.65">${perk}</div>
+     </a>`).join('');
+  return `<div style="font-weight:600;margin:12px 0 6px">♥ Support — <a href="https://www.patreon.com/lanternos" target="_blank" rel="noopener noreferrer" style="color:inherit">Patreon</a></div><div style="display:flex;gap:8px;flex-wrap:wrap">${cards}</div>`;
+}
+
+async function renderExploreEmbed(kind, userText) {
+  addUserBubble(userText);
+  const messages = document.getElementById('messages');
+  const row = document.createElement('div');
+  row.className = 'msg-row agent';
+  row.innerHTML = '<div class="msg-label">Keystone</div><div class="bubble" style="font-size:13px">Pulling that up…</div>';
+  messages.appendChild(row);
+  if (typeof scrollToBottom === 'function') scrollToBottom();
+  const bubble = row.querySelector('.bubble');
+  const base = embedBase();
+  const want = k => kind === k || kind === 'all';
+  // Surface failures instead of rendering a confusing blank: a 404 means the
+  // server predates these routes (needs a restart) or isn't deployed yet.
+  const fail = (label, e) => {
+    const m = (e && e.message) || String(e || 'error');
+    const hint = /HTTP 404/.test(m) ? ' — route not deployed (restart the server / merge the PR)' : '';
+    return `<div style="font-size:12px;opacity:0.65;margin:8px 0">⚠ ${label} unavailable (${embedEsc(m)})${hint}</div>`;
+  };
+  const parts = [];
+  if (want('videos'))   { try { parts.push(await embedVideos(base)); }   catch (e) { parts.push(fail('Videos', e)); } }
+  if (want('discover')) { try { parts.push(await embedDiscover(base)); } catch (e) { parts.push(fail('Discover', e)); } }
+  if (want('build'))    { try { parts.push(await embedBuild(base)); }    catch (e) { parts.push(fail('Build', e)); } }
+  if (want('support'))  { try { parts.push(embedSupport()); }            catch (e) { parts.push(fail('Support', e)); } }
+  parts.push(`<div style="margin-top:10px;font-size:11px;opacity:0.6">See more on <a href="/explore.html" style="color:var(--accent)">Explore →</a></div>`);
+  bubble.innerHTML = parts.filter(Boolean).join('');
+  if (typeof scrollToBottom === 'function') scrollToBottom();
+}
+
 // ── Main send ─────────────────────────────────────────────────────────────────
 async function sendMessage() {
   const input = document.getElementById('input');
@@ -621,22 +788,13 @@ async function sendMessage() {
           btn.textContent = a.label;
           if (a.href) btn.onclick = () => window.open(a.href, '_blank', 'noopener');
           else if (a.autonomous && a.issue) {
-            btn.onclick = async () => {
+            // Use the same observable streaming path as the !ask chips, so a
+            // user who *types* "what should I work on?" gets the live step
+            // panel (plan → patch → tests → commit → push → PR) instead of an
+            // opaque "Working… ✓ Done" button. Σ₀: no hidden agency (#527).
+            btn.onclick = () => {
               btn.disabled = true; btn.textContent = 'Working…';
-              try {
-                const wr = await fetch(`${base}/api/convergence/autonomous-work`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issue: a.issue }) });
-                const wres = await wr.json();
-                if (wres.ok) { btn.textContent = '✓ Done'; btn.style.color = '#4ade80'; }
-                else {
-                  btn.textContent = '✗ Failed';
-                  btn.style.color = '#f87171';
-                  const errRow = document.createElement('div');
-                  errRow.className = 'msg-row agent';
-                  errRow.innerHTML = `<div class="msg-label">Keystone</div><div class="bubble" style="font-size:13px;color:#f87171">✗ Auto-work failed: ${wres.error || 'unknown error'}</div>`;
-                  document.getElementById('messages').appendChild(errRow);
-                  if (typeof scrollToBottom === 'function') scrollToBottom();
-                }
-              } catch { btn.textContent = '✗ Error'; btn.style.color = '#f87171'; }
+              runAutowork(a.issue, btn, base).catch(e => console.error('[autowork]', e));
             };
           } else if (a.command) btn.onclick = () => fillAndSend(a.command);
           wrap.appendChild(btn);
@@ -650,6 +808,17 @@ async function sendMessage() {
     return;
   }
 
+  // Explore embeds — surface videos / discover feed / GitHub activity / Patreon
+  // tiers inline when asked (bang commands or a "show/what/latest" NL framing).
+  // Deterministic, no LLM cost; same server-cached routes as the Explore page.
+  const embedKind = detectEmbedIntent(text);
+  if (embedKind) {
+    input.value = '';
+    input.style.height = 'auto';
+    renderExploreEmbed(embedKind, text).catch(e => console.error('[embed]', e));
+    return;
+  }
+
   isSending = true;
   document.getElementById('send-btn').disabled = true;
 
@@ -659,7 +828,7 @@ async function sendMessage() {
   history.push({ role: 'user', text });
   writeCubeDelta('chat_message', [], 'conversation:' + Date.now());
 
-  const { msg, bubble, cursor } = createAgentBubble(false);
+  const { msg, bubble, cursor, thinking } = createAgentBubble(false);
   const container = document.getElementById('messages');
 
   let fullText = '';
@@ -681,6 +850,10 @@ async function sendMessage() {
         provider,
         history: history.slice(-10),
         personalContext: sanitizePersonalContext(personalContext || {}),
+        // Scope this turn to the active chat session so it persists into the Chats
+        // drawer (#773). dream-chat.js owns the id and mirrors it to localStorage;
+        // without it, turns log untagged and never form a saved session.
+        sessionId: localStorage.getItem('lantern_chat_session') || undefined,
       }),
       signal: AbortSignal.timeout(90000),
     });
@@ -736,14 +909,10 @@ async function sendMessage() {
 
   cursor.remove();
 
-  // Truncation detection: stream ended without a done event and text looks cut off
-  if (fullText && !receivedDone) {
-    const truncBadge = document.createElement('span');
-    truncBadge.title = 'Stream ended without completing — response may be truncated';
-    truncBadge.style.cssText = 'font-size:10px;opacity:0.5;margin-left:6px;vertical-align:middle;cursor:help';
-    truncBadge.textContent = '⚠ truncated';
-    bubble.appendChild(truncBadge);
-  }
+  // Truncation detection: stream ended without a done event and text looks cut off.
+  // The badge is attached AFTER the final innerHTML render below — otherwise that
+  // render wipes it out and the warning never shows.
+  const looksTruncated = !!(fullText && !receivedDone);
 
   if (!fullText) {
     fullText = serverErrorText || FALLBACKS[Math.floor(Math.random() * FALLBACKS.length)];
@@ -753,6 +922,14 @@ async function sendMessage() {
   }
 
   bubble.innerHTML = renderMarkdown(fullText);
+
+  if (looksTruncated) {
+    const truncBadge = document.createElement('span');
+    truncBadge.title = 'Stream ended without completing — response may be truncated';
+    truncBadge.style.cssText = 'font-size:10px;opacity:0.5;margin-left:6px;vertical-align:middle;cursor:help';
+    truncBadge.textContent = '⚠ truncated';
+    bubble.appendChild(truncBadge);
+  }
 
   if (bubble.dataset.sigma0Corrected) {
     const badge = document.createElement('span');
@@ -781,6 +958,41 @@ async function sendMessage() {
     warn.style.cssText = 'font-size:11px;color:#f5a623;margin-top:2px;';
     warn.textContent = '⚠ Offline — answered by the local model (cloud providers unavailable). Quality may be lower.';
     msg.appendChild(warn);
+  }
+
+  // 🔊 Read-aloud + narration. This file is the live reply renderer, so TTS must live
+  // here — the equivalent code in dream-chat.js runs on a dead render path, which is why
+  // replies never read back. Reuses window.speakText (server TTS → browser fallback). (#858)
+  if (!didError && fullText && fullText.trim() && typeof window.speakText === 'function') {
+    const speakBtn = document.createElement('button');
+    speakBtn.type = 'button';
+    speakBtn.className = 'read-aloud-btn';
+    speakBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:13px;opacity:0.6;margin-top:4px;padding:2px 4px;color:var(--accent,inherit);';
+    speakBtn.textContent = '🔊 Read aloud';
+    speakBtn.setAttribute('aria-label', 'Read this reply aloud');
+    const resetSpeakBtn = () => {
+      speakBtn.dataset.speaking = '';
+      speakBtn.textContent = '🔊 Read aloud';
+      if (window.__activeReadReset === resetSpeakBtn) window.__activeReadReset = null;
+    };
+    const startSpeaking = () => {
+      if (window.__activeReadReset) window.__activeReadReset();  // reset whichever reply was speaking
+      window.__activeReadReset = resetSpeakBtn;
+      speakBtn.dataset.speaking = '1';
+      speakBtn.textContent = '⏹ Stop';
+      window.speakText(fullText, resetSpeakBtn);
+    };
+    speakBtn.addEventListener('click', () => {
+      if (speakBtn.dataset.speaking === '1') {
+        if (typeof window.stopSpeaking === 'function') window.stopSpeaking();
+        resetSpeakBtn();
+      } else {
+        startSpeaking();
+      }
+    });
+    msg.appendChild(speakBtn);
+    // Global narrate toggle (🔊 nav button sets window.narrateReplies): speak automatically.
+    if (window.narrateReplies) startSpeaking();
   }
 
   if (!didError) history.push({ role: 'assistant', text: fullText });
